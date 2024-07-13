@@ -173,6 +173,7 @@ thread_create (const char *name, int priority,
   tid_t tid;
 
   ASSERT (function != NULL);
+  ASSERT(priority >= PRI_MIN && priority <= PRI_MAX);
 
   /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
@@ -198,6 +199,8 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+
+  t->elem.aux = aux;
   /* Add to run queue. */
   thread_unblock (t);
 
@@ -220,6 +223,14 @@ thread_block (void)
   schedule ();
 }
 
+bool compare_priorities(const struct list_elem *a,
+                        const struct list_elem *b,
+                        void *aux)
+{
+    if(a->priority >= b->priority) return false;
+    return true;
+}
+
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -229,7 +240,7 @@ thread_block (void)
    it may expect that it can atomically unblock a thread and
    update other data. */
 void
-thread_unblock (struct thread *t) 
+thread_unblock (struct thread *t)
 {
   enum intr_level old_level;
 
@@ -238,6 +249,7 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
+  list_sort(&ready_list, compare_priorities, t->elem.aux);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
