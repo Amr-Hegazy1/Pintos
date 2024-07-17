@@ -91,9 +91,9 @@ struct list_elem
   {
     struct list_elem *prev;     /* Previous list element. */
     struct list_elem *next;     /* Next list element. */
-    int priority; /* Priority of list element */
     void *aux; /* AUX of list element */
   };
+
 
 /* List. */
 struct list 
@@ -123,6 +123,8 @@ struct list
        struct list my_list = LIST_INITIALIZER (my_list); */
 #define LIST_INITIALIZER(NAME) { { NULL, &(NAME).tail }, \
                                  { &(NAME).head, NULL } }
+
+
 
 void list_init (struct list *);
 
@@ -179,5 +181,8 @@ void list_unique (struct list *, struct list *duplicates,
 /* Max and min. */
 struct list_elem *list_max (struct list *, list_less_func *, void *aux);
 struct list_elem *list_min (struct list *, list_less_func *, void *aux);
+
+
+void list_print(struct list *list);
 
 #endif /* lib/kernel/list.h */

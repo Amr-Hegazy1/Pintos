@@ -50,6 +50,7 @@ sema_init (struct semaphore *sema, unsigned value)
   list_init (&sema->waiters);
 }
 
+
 /* Down or "P" operation on a semaphore.  Waits for SEMA's value
    to become positive and then atomically decrements it.
 
@@ -66,11 +67,15 @@ sema_down (struct semaphore *sema)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  while (sema->value == 0) 
+
+  while (sema->value == 0)
     {
-      list_push_back (&sema->waiters, &thread_current ()->elem);
+      // list_push_back (&sema->waiters, &thread_current ()->elem);
+      list_insert_ordered(&sema->waiters, &thread_current()->elem, compare_priorities, NULL);  
+
       thread_block ();
     }
+
   sema->value--;
   intr_set_level (old_level);
 }
@@ -113,9 +118,13 @@ sema_up (struct semaphore *sema)
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+  if (!list_empty (&sema->waiters)) {
+
+
+
+      thread_unblock(list_entry(list_pop_front(&sema->waiters),
+      struct thread, elem));
+  }
   sema->value++;
   intr_set_level (old_level);
 }
@@ -195,9 +204,28 @@ lock_acquire (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
+  if(lock->holder != NULL && lock->holder->priority < thread_current()->priority) {
+      lock->holder->og_priority = lock->holder->priority;
 
-  sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+
+      lock->holder->priority = thread_current()->priority;
+
+      
+
+    //  thread_set_priority(thread_current()->priority);
+
+
+
+  }else {
+
+
+
+      lock->holder = thread_current();
+  }
+
+    sema_down(&lock->semaphore);
+    
+
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -232,6 +260,14 @@ lock_release (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
+  if((lock->holder->og_priority) != -1) {
+
+
+      lock->holder->priority = lock->holder->og_priority;
+      lock->holder->og_priority = -1;
+      // thread_yield();
+  }
+  
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
@@ -240,7 +276,7 @@ lock_release (struct lock *lock)
    otherwise.  (Note that testing whether some other thread holds
    a lock would be racy.) */
 bool
-lock_held_by_current_thread (const struct lock *lock) 
+lock_held_by_current_thread (const struct lock *lock)
 {
   ASSERT (lock != NULL);
 

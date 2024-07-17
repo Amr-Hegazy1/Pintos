@@ -24,6 +24,8 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+
+#define MAX_NESTED_DONATIONS 8  /* Number of priorities that can be inherited */
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -90,8 +92,13 @@ struct thread
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
 
+
+
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+
+
+    int og_priority; /* Original Priority for nested */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -137,5 +144,8 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+bool compare_priorities(struct list_elem *a,
+                        struct list_elem *b,
+                        void *aux UNUSED);
 
 #endif /* threads/thread.h */
