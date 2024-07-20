@@ -32,6 +32,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -120,12 +121,14 @@ sema_up (struct semaphore *sema)
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) {
 
+      list_sort(&sema->waiters, compare_priorities, NULL);
 
-
+      
       thread_unblock(list_entry(list_pop_front(&sema->waiters),
       struct thread, elem));
   }
   sema->value++;
+  thread_yield();
   intr_set_level (old_level);
 }
 
@@ -165,7 +168,7 @@ sema_test_helper (void *sema_)
       sema_up (&sema[1]);
     }
 }
-
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
@@ -187,6 +190,8 @@ lock_init (struct lock *lock)
   ASSERT (lock != NULL);
 
   lock->holder = NULL;
+  lock->og_priority = PRIORITY_NOT_DONATED;
+  
   sema_init (&lock->semaphore, 1);
 }
 
@@ -201,29 +206,57 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+  enum intr_level old_level = intr_disable ();
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
-  if(lock->holder != NULL && lock->holder->priority < thread_current()->priority) {
-      lock->holder->og_priority = lock->holder->priority;
 
+  
+
+  // check if lock is held by no one
+  if (lock->holder == NULL) {
+      lock->holder = thread_current();
+      lock->og_priority = PRIORITY_NOT_DONATED;
+
+      
+      sema_down(&lock->semaphore);
+      intr_set_level (old_level);
+      return;
+  }
+
+
+  
+  if(lock->holder->priority < thread_current()->priority) {
+
+      if(lock->og_priority == PRIORITY_NOT_DONATED)
+        lock->og_priority = lock->holder->priority;
+
+
+      
 
       lock->holder->priority = thread_current()->priority;
 
       
-
-    //  thread_set_priority(thread_current()->priority);
-
-
-
-  }else {
+      thread_sort();
+      
 
 
 
-      lock->holder = thread_current();
   }
+ 
+  sema_down(&lock->semaphore);
+  // check if lock is held by no one
+  if (lock->holder == NULL) {
+      lock->holder = thread_current();
+      lock->og_priority = PRIORITY_NOT_DONATED;
+      intr_set_level (old_level);
+      return;
+  }
+  intr_set_level (old_level);
 
-    sema_down(&lock->semaphore);
+
+  
+    
     
 
 }
@@ -257,19 +290,30 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
+  enum intr_level old_level = intr_disable ();
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+  
+  if((lock->og_priority) != -1) {
 
-  if((lock->holder->og_priority) != -1) {
+      
+      
+      lock->holder->priority = lock->og_priority;
 
 
-      lock->holder->priority = lock->holder->og_priority;
-      lock->holder->og_priority = -1;
-      // thread_yield();
+            
+      thread_sort();
+      
+      // thread_set_priority(lock->holder->priority);
+      
   }
   
+  
   lock->holder = NULL;
+  lock->og_priority = PRIORITY_NOT_DONATED;
   sema_up (&lock->semaphore);
+  intr_set_level (old_level);
+  
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -282,7 +326,7 @@ lock_held_by_current_thread (const struct lock *lock)
 
   return lock->holder == thread_current ();
 }
-
+
 /* One semaphore in a list. */
 struct semaphore_elem 
   {
