@@ -246,7 +246,7 @@ thread_unblock (struct thread *t)
   ASSERT (t->status == THREAD_BLOCKED);
 
   
-  list_insert_ordered(&ready_list, &t->elem, compare_priorities, NULL);
+  list_insert_ordered(&ready_list, &t->elem, compare_thread_priorities, NULL);
   
   t->status = THREAD_READY;
   
@@ -321,7 +321,7 @@ thread_yield (void)
   old_level = intr_disable ();
   if (cur != idle_thread) {
       // list_push_back (&ready_list, &cur->elem);
-      list_insert_ordered(&ready_list, &cur->elem, compare_priorities, NULL);
+      list_insert_ordered(&ready_list, &cur->elem, compare_thread_priorities, NULL);
 
   }
   cur->status = THREAD_READY;
@@ -350,15 +350,27 @@ thread_foreach (thread_action_func *func, void *aux)
 void 
 thread_sort(void)
 {
-  list_sort(&ready_list, compare_priorities, NULL);
+  list_sort(&ready_list, compare_thread_priorities, NULL);
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
 {
-  
-  thread_current()->priority = new_priority;
+    struct thread *t = thread_current();
+  if(!list_empty(&t->locks_held)) {
+      // update original_priority for all locks held
+
+      for (struct list_elem *e = list_begin(&t->locks_held); e != list_end(&t->locks_held); e = list_next(e)){
+          struct lock *l =  list_entry(e, struct lock, elem);
+
+          if(l->original_priority != PRIORITY_NOT_DONATED){
+              l->original_priority = new_priority;
+          }
+      }
+      return;
+  }
+  t->priority = new_priority;
   
   
   
@@ -491,14 +503,16 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
-  
-  
+
+  list_init(&t->locks_held);
+  list_init(&t->locks_waiting_on);
+
   
   t->magic = THREAD_MAGIC;
 
 
 
-  t->og_priority = PRIORITY_NOT_DONATED;
+
 
   
 
@@ -622,16 +636,50 @@ allocate_tid (void)
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 
-bool compare_priorities(const struct list_elem *a,
+bool compare_thread_priorities(const struct list_elem *a,
                         const struct list_elem *b,
                         void *aux UNUSED)
 {
     struct thread *pta = list_entry (a, struct thread, elem);
     struct thread *ptb = list_entry (b, struct thread, elem);
-    // printf("thread a: %s, priority: %d\n", pta->name, pta->priority);
-    // printf("thread b: %s, priority: %d\n", ptb->name, ptb->priority);
-    
-    
+//     printf("thread a: %s, priority: %d\n", pta->name, pta->priority);
+//     printf("thread b: %s, priority: %d\n", ptb->name, ptb->priority);
+
+
     return pta->priority > ptb->priority;
 }
+
+/* Loops on all threads and sets the priority of the thread with to the highest priority */
+void
+demote_thread(struct thread *t, int original_priority) {
+
+    int min = original_priority;
+    int max = PRIORITY_NOT_DONATED;
+    for (int i = 0; i < list_size(&t->locks_held); i++) {
+        struct lock *l = list_entry(list_begin(&t->locks_held), struct lock, elem);
+        if (l->max_priority_donated > max) {
+            max = l->max_priority_donated;
+        }
+        if (l->original_priority < min && l->original_priority != PRIORITY_NOT_DONATED) {
+            min = l->original_priority;
+
+        }
+
+    }
+    if (min != 35 && min != PRIORITY_NOT_DONATED) {
+        // set original priority to the minimum priority of the locks
+        for (int i = 0; i < list_size(&t->locks_held); i++) {
+            struct lock *l = list_entry(list_begin(&t->locks_held), struct lock, elem);
+            l->original_priority = min;
+        }
+    }
+
+    if (max == PRIORITY_NOT_DONATED) {
+        max = original_priority;
+    }
+
+    t->priority = max;
+
+}
+
 

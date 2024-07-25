@@ -91,8 +91,9 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    struct lock locks_held[MAX_NESTED_DONATIONS];               /* Locks the thread holds */
+    struct list locks_held;             /* Locks that the thread holds */
     struct list_elem allelem;           /* List element for all threads list. */
+    struct list locks_waiting_on;       /* Locks that the thread is waiting on */
 
 
 
@@ -148,10 +149,11 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-bool compare_priorities(const struct list_elem *a,
+bool compare_thread_priorities(const struct list_elem *a,
                         const struct list_elem *b,
                         void *aux UNUSED);
 
 
+void demote_thread(struct thread *t, int original_priority);
 
 #endif /* threads/thread.h */

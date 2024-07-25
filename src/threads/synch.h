@@ -4,6 +4,8 @@
 
 #include <list.h>
 #include <stdbool.h>
+#include <debug.h>
+#include <stdint.h>
 #define PRIORITY_NOT_DONATED -1
 #define MAX_NESTED_DONATIONS 8  /* Number of priorities that can be inherited */
 
@@ -26,7 +28,12 @@ struct lock
   {
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
-    int og_priority;            /* Original priority of the thread that holds the lock */
+
+    int original_priority;      /* Original priority of the thread */
+    int max_priority_donated;   /* Maximum priority that has been donated to the thread */
+    int num_donations;          /* Number of priorities that have been donated to the thread */
+    struct list_elem elem;      /* List element for locks held list in each thread */
+    struct list_elem elem2;      /* List element for locks waiting list in each thread */
   };
 
 void lock_init (struct lock *);
@@ -45,6 +52,8 @@ void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
+bool compare_condvar_priorities(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+
 
 /* Optimization barrier.
 

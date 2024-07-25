@@ -72,7 +72,7 @@ sema_down (struct semaphore *sema)
   while (sema->value == 0)
     {
       // list_push_back (&sema->waiters, &thread_current ()->elem);
-      list_insert_ordered(&sema->waiters, &thread_current()->elem, compare_priorities, NULL);  
+      list_insert_ordered(&sema->waiters, &thread_current()->elem, compare_thread_priorities, NULL);
 
       thread_block ();
     }
@@ -121,7 +121,7 @@ sema_up (struct semaphore *sema)
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) {
 
-      list_sort(&sema->waiters, compare_priorities, NULL);
+      list_sort(&sema->waiters, compare_thread_priorities, NULL);
 
       
       thread_unblock(list_entry(list_pop_front(&sema->waiters),
@@ -190,7 +190,10 @@ lock_init (struct lock *lock)
   ASSERT (lock != NULL);
 
   lock->holder = NULL;
-  lock->og_priority = PRIORITY_NOT_DONATED;
+  lock->num_donations = 0;
+  lock->max_priority_donated = PRIORITY_NOT_DONATED;
+  lock->original_priority = PRIORITY_NOT_DONATED;
+
   
   sema_init (&lock->semaphore, 1);
 }
@@ -216,9 +219,12 @@ lock_acquire (struct lock *lock)
   // check if lock is held by no one
   if (lock->holder == NULL) {
       lock->holder = thread_current();
-      lock->og_priority = PRIORITY_NOT_DONATED;
+      lock->num_donations = 0;
+      lock->original_priority = PRIORITY_NOT_DONATED;
 
-      
+      list_push_back(&lock->holder->locks_held, &lock->elem);
+      lock->max_priority_donated = lock->holder->priority;
+
       sema_down(&lock->semaphore);
       intr_set_level (old_level);
       return;
@@ -228,13 +234,37 @@ lock_acquire (struct lock *lock)
   
   if(lock->holder->priority < thread_current()->priority) {
 
-      if(lock->og_priority == PRIORITY_NOT_DONATED)
-        lock->og_priority = lock->holder->priority;
+
+      if(lock->original_priority == PRIORITY_NOT_DONATED){
+          lock->original_priority = lock->holder->priority;
+      }
+
+      lock->num_donations++;
 
 
-      
+
+
 
       lock->holder->priority = thread_current()->priority;
+
+      if (lock->max_priority_donated < thread_current()->priority) {
+          lock->max_priority_donated = thread_current()->priority;
+      }
+
+      // promote threads that are blocked on other locks held by the current thread
+      for (struct list_elem *e = list_begin(&lock->holder->locks_waiting_on); e != list_end(&lock->holder->locks_waiting_on); e = list_next(e)) {
+          struct lock *l = list_entry(e, struct lock, elem2);
+
+          if (l == lock) continue;
+          if(l->holder->priority < thread_current()->priority){
+              l->holder->priority = thread_current()->priority;
+
+          }
+
+
+      }
+
+
 
       
       thread_sort();
@@ -243,12 +273,20 @@ lock_acquire (struct lock *lock)
 
 
   }
- 
-  sema_down(&lock->semaphore);
+
+  if(!sema_try_down(&lock->semaphore)){
+      list_push_back(&thread_current()->locks_waiting_on, &lock->elem2);
+      sema_down(&lock->semaphore);
+      list_remove(&lock->elem2);
+  }
   // check if lock is held by no one
   if (lock->holder == NULL) {
       lock->holder = thread_current();
-      lock->og_priority = PRIORITY_NOT_DONATED;
+      lock->num_donations = 0;
+      lock->max_priority_donated = lock->holder->priority;
+      lock->original_priority = PRIORITY_NOT_DONATED;
+
+      list_push_back(&lock->holder->locks_held, &lock->elem);
       intr_set_level (old_level);
       return;
   }
@@ -282,6 +320,9 @@ lock_try_acquire (struct lock *lock)
   return success;
 }
 
+
+
+
 /* Releases LOCK, which must be owned by the current thread.
 
    An interrupt handler cannot acquire a lock, so it does not
@@ -293,24 +334,32 @@ lock_release (struct lock *lock)
   enum intr_level old_level = intr_disable ();
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
-  
-  if((lock->og_priority) != -1) {
+  list_remove(&lock->elem);
+  if(lock->num_donations > 0) {
 
-      
-      
-      lock->holder->priority = lock->og_priority;
 
+      demote_thread(lock->holder, lock->original_priority);
+
+
+
+
+      lock->num_donations--;
 
             
       thread_sort();
       
-      // thread_set_priority(lock->holder->priority);
+
       
   }
-  
-  
+
+
+
+
   lock->holder = NULL;
-  lock->og_priority = PRIORITY_NOT_DONATED;
+  lock->num_donations = 0;
+  lock->original_priority = PRIORITY_NOT_DONATED;
+  lock->max_priority_donated = PRIORITY_NOT_DONATED;
+
   sema_up (&lock->semaphore);
   intr_set_level (old_level);
   
@@ -332,6 +381,7 @@ struct semaphore_elem
   {
     struct list_elem elem;              /* List element. */
     struct semaphore semaphore;         /* This semaphore. */
+    int priority;                       /* Priority of thread */
   };
 
 /* Initializes condition variable COND.  A condition variable
@@ -343,6 +393,18 @@ cond_init (struct condition *cond)
   ASSERT (cond != NULL);
 
   list_init (&cond->waiters);
+}
+
+bool compare_condvar_priorities(const struct list_elem *a,
+                               const struct list_elem *b,
+                               void *aux UNUSED)
+{
+    struct semaphore_elem *pta = list_entry (a, struct semaphore_elem, elem);
+    struct semaphore_elem *ptb = list_entry (b, struct semaphore_elem, elem);
+
+
+
+    return pta->priority > ptb->priority;
 }
 
 /* Atomically releases LOCK and waits for COND to be signaled by
@@ -376,7 +438,9 @@ cond_wait (struct condition *cond, struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
   
   sema_init (&waiter.semaphore, 0);
-  list_push_back (&cond->waiters, &waiter.elem);
+  waiter.priority = thread_current()->priority;
+//  list_push_back (&cond->waiters, &waiter.elem);
+  list_insert_ordered(&cond->waiters, &waiter.elem, compare_condvar_priorities, NULL);
   lock_release (lock);
   sema_down (&waiter.semaphore);
   lock_acquire (lock);
@@ -400,6 +464,7 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   if (!list_empty (&cond->waiters)) 
     sema_up (&list_entry (list_pop_front (&cond->waiters),
                           struct semaphore_elem, elem)->semaphore);
+
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
