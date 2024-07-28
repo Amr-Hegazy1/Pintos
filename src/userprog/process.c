@@ -88,6 +88,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+    while(1){}
   return -1;
 }
 
@@ -206,7 +207,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+load (const char *command, void (**eip) (void), void **esp)
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -214,6 +215,17 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofs;
   bool success = false;
   int i;
+
+  char * command_copy;
+  command_copy = palloc_get_page(0);
+  if (command_copy == NULL)
+      return TID_ERROR;
+
+  strlcpy(command_copy, command, PGSIZE);
+
+  const char *save_ptr;
+
+  char *file_name = strtok_r(command_copy, " ", &save_ptr);
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
@@ -307,6 +319,64 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
+
+  /* Push arguments onto the stack */
+    char *argv[128];
+    int argc = 0;
+    char *token;
+    // push file name
+    *esp -= strlen(file_name) + 1;
+    argv[argc] = *esp;
+    memcpy(*esp, file_name, strlen(file_name) + 1);
+    argc++;
+
+    for (token = strtok_r(NULL, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
+    {
+        *esp -= strlen(token) + 1;
+        argv[argc] = *esp;
+        memcpy(*esp, token, strlen(token) + 1);
+        argc++;
+    }
+
+    // word align
+    *esp -= (size_t)*esp % 4;
+
+    // push null pointer sentinel
+    *esp -= 4;
+    *(int *)*esp = 0;
+
+    // push pointers to arguments
+    for (int i = argc - 1; i >= 0; i--)
+    {
+        *esp -= 4;
+        *(char **)*esp = argv[i];
+    }
+
+    // push argv
+    char **argv_ptr = *esp;
+    *esp -= 4;
+    *(char **)*esp = argv_ptr;
+
+    // push argc
+    *esp -= 4;
+    *(int *)*esp = argc;
+
+    // push fake return address
+    *esp -= 4;
+    *(int *)*esp = 0;
+
+
+
+
+
+
+
+
+
+
+  // print stack
+  hex_dump((uintptr_t)*esp, *esp, PHYS_BASE - *esp, true);
+
 
   success = true;
 
@@ -443,6 +513,8 @@ setup_stack (void **esp)
     }
   return success;
 }
+
+
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
