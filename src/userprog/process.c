@@ -17,9 +17,32 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
+#include "threads/malloc.h"
+
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+struct start_process_info {
+  char *file_name;    /* file name */
+  tid_t parent_pid;  /* parent process id */
+};
+
+struct semaphore exec_sem;
+
+void exec_sem_init(void){
+    sema_init(&exec_sem, 0);
+}
+
+void exec_sem_down(void){
+    sema_down(&exec_sem);
+}
+
+void exec_sem_up(void){
+    sema_up(&exec_sem);
+}
+
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -31,6 +54,9 @@ process_execute (const char *file_name)
   char *fn_copy;
   tid_t tid;
 
+  if(file_name == NULL) return TID_ERROR;
+
+
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -38,19 +64,74 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  // create a second copy of file_name to extract the file name
+  char *file_name_copy = palloc_get_page(0);
+  if (file_name_copy == NULL)
+    return TID_ERROR;
+  strlcpy (file_name_copy, file_name, PGSIZE);
+
+
+
+
+  
+  
+
+  const char *save_ptr;
+
+  char *fn = strtok_r(file_name_copy, " ", &save_ptr);
+
+ 
+  
+
+  if(!fileExists(fn)) {
+    palloc_free_page (fn_copy);
+    palloc_free_page (file_name_copy);
+
+    return TID_ERROR;
+  }
+
+  tid_t parent_pid = thread_current()->tid;
+
+  struct start_process_info *spi = palloc_get_page(0);
+
+  if (spi == NULL) {
+    palloc_free_page (fn_copy);
+    palloc_free_page (file_name_copy);
+
+    return TID_ERROR;
+  }
+
+  
+
+  spi->file_name = fn_copy;
+  spi->parent_pid = parent_pid;
+
+  
+
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, spi);
+  
+  if (tid == TID_ERROR){
+    palloc_free_page (fn_copy);
+    palloc_free_page (file_name_copy);
+  }
+
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *spi_)
 {
-  char *file_name = file_name_;
+  struct start_process_info *spi = spi_;
+
+  char *file_name = spi->file_name;
+
+  tid_t parent_pid = spi->parent_pid;
+
+  
+
   struct intr_frame if_;
   bool success;
 
@@ -61,10 +142,19 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
+  
+
+
   /* If load failed, quit. */
-  palloc_free_page (file_name);
+  
   if (!success) 
     thread_exit ();
+
+  thread_current()->parent_tid = parent_pid;
+
+  
+  // palloc_free_page(spi_);
+  
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -73,6 +163,8 @@ start_process (void *file_name_)
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+
+
   NOT_REACHED ();
 }
 
@@ -86,10 +178,47 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid)
 {
-    while(1){}
-  return -1;
+  struct thread *current_thread = thread_current();
+  struct thread *t = get_child_process_by_tid(child_tid, current_thread);
+  
+  if(t == NULL) {
+    // search exited child process
+    struct exit_status *es = get_exit_status_by_tid(child_tid, current_thread);
+
+    if(es == NULL) {
+      return -1;
+    }
+
+    int status = es->status;
+
+    list_remove(&(es->elem));
+
+    palloc_free_page(es);
+    return status;
+  }
+
+  
+  lock_acquire(&t->wait_lock);
+
+
+  cond_wait(&t->wait_cond, &t->wait_lock);
+
+  // remove from exit status list
+  struct exit_status *es = get_exit_status_by_tid(child_tid, current_thread);
+  
+  if (es != NULL) {
+    
+    list_remove(&(es->elem));
+    palloc_free_page(es);
+    
+    
+
+  }
+
+  
+  return current_thread->wait_exit_status;
 }
 
 /* Free the current process's resources. */
@@ -97,7 +226,13 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
+  cur->exited = true;
   uint32_t *pd;
+  const char *save_ptr;
+
+  char *file_name = strtok_r(cur->name, " ", &save_ptr);
+
+  printf ("%s: exit(%d)\n", file_name, cur->exit_status);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -114,7 +249,9 @@ process_exit (void)
       cur->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (pd);
+
     }
+
 }
 
 /* Sets up the CPU for running user code in the current
@@ -365,17 +502,10 @@ load (const char *command, void (**eip) (void), void **esp)
     *esp -= 4;
     *(int *)*esp = 0;
 
-
-
-
-
-
-
-
-
+    
 
   // print stack
-  hex_dump((uintptr_t)*esp, *esp, PHYS_BASE - *esp, true);
+//  hex_dump((uintptr_t)*esp, *esp, PHYS_BASE - *esp, true);
 
 
   success = true;
@@ -385,7 +515,8 @@ load (const char *command, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);

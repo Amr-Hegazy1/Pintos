@@ -7,5 +7,8 @@ tid_t process_execute (const char *file_name);
 int process_wait (tid_t);
 void process_exit (void);
 void process_activate (void);
+void exec_sem_init(void);
+void exec_sem_down(void);
+void exec_sem_up(void);
 
 #endif /* userprog/process.h */

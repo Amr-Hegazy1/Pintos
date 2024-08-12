@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -84,6 +85,7 @@ struct thread
   {
     /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
+    tid_t parent_tid;                  /* Parent thread identifier */
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
@@ -96,11 +98,29 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct list child_processes;        /* list of all child processes that arised from calling `exec` */
+    struct list_elem child_process_elem; /* child processes list element */
+    struct list file_descriptors; /* list of all file descriptors of current process */
+    bool exited;                   /* boolean to check if process has exited */
+    uint32_t file_counter;         /* counter of number of file */
+    struct condition wait_cond;   /* condition variable to wait for child process to exit */
+    struct lock wait_lock;       /* lock to wait for child process to exit */
+    int exit_status;         /* exit status of the process */
+    int wait_exit_status;   /* exit status of the child process since process can only wait on one child process */
+    struct list exit_status_list; /* list of exit status of all child processes */
+
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+struct exit_status
+{
+  tid_t tid;
+  int status;
+  struct list_elem elem;
+};
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -124,6 +144,7 @@ tid_t thread_tid (void);
 const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
+void thread_exit_with_status(int);
 void thread_yield (void);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
@@ -137,5 +158,10 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+struct thread *get_child_process_by_tid(tid_t, struct thread *);
+struct exit_status *get_exit_status_by_tid(tid_t, struct thread *);
+struct thread *get_parent_process_by_tid(tid_t);
+struct file *get_file_by_fd(int, struct thread *);
+bool correct_fd(int);
 
 #endif /* threads/thread.h */

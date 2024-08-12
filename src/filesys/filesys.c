@@ -101,3 +101,14 @@ do_format (void)
   free_map_close ();
   printf ("done.\n");
 }
+
+bool fileExists(const char *name){
+    struct dir *dir = dir_open_root ();
+    struct inode *inode = NULL;
+    bool doesExist = false;
+    if (dir != NULL)
+        doesExist = dir_lookup (dir, name, &inode);
+
+
+    return doesExist;
+}

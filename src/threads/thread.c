@@ -11,6 +11,9 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "kernel/list.h"
+#include "filesys/file.h"
+#include "threads/malloc.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -92,6 +95,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -198,6 +202,9 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+  /* add as a child process to parent process */
+  list_push_back(&(thread_current()->child_processes), &t->child_process_elem);
+
   /* Add to run queue. */
   thread_unblock (t);
 
@@ -278,22 +285,69 @@ thread_tid (void)
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
-thread_exit (void) 
+thread_exit (void)
 {
   ASSERT (!intr_context ());
 
-#ifdef USERPROG
-  process_exit ();
-#endif
+
 
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
+  
+#ifdef USERPROG
+  
+  
+  process_exit ();
+  list_remove(&thread_current()->child_process_elem);
+  
+  lock_acquire(&thread_current()->wait_lock);
+  
+  cond_signal(&thread_current()->wait_cond, &thread_current()->wait_lock);
+  lock_release(&thread_current()->wait_lock);
+ 
+  
+
+  
+  
+  
+#endif
   list_remove (&thread_current()->allelem);
+
+  
+
   thread_current ()->status = THREAD_DYING;
+
   schedule ();
   NOT_REACHED ();
+}
+
+void
+thread_exit_with_status(int exit_status){
+    thread_current()->exit_status = exit_status;
+    // update `wait_exit_status` of parent process
+    struct thread *parent_thread = get_parent_process_by_tid(thread_current()->parent_tid);
+    if(parent_thread != NULL){
+        parent_thread->wait_exit_status = exit_status;
+
+
+        // add exit status to exit status list of parent process
+        struct exit_status *es = palloc_get_page(0);
+        es->tid = thread_current()->tid;
+        es->status = exit_status;
+        list_push_back(&parent_thread->exit_status_list, &es->elem);
+        
+    }
+
+    
+
+
+    
+
+
+
+    thread_exit();
 }
 
 /* Yields the CPU.  The current thread is not put to sleep and
@@ -424,7 +478,7 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -463,9 +517,21 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+#ifdef USERPROG
+  lock_init(&t->wait_lock);
+  cond_init(&t->wait_cond);
+  list_init(&t->child_processes);
+  list_init(&t->file_descriptors);
+  list_init(&t->exit_status_list);
+  t->exited = false;
+  t->exit_status = -1;
+  t->file_counter = 0;
+  t->wait_exit_status = -1;
 
+#endif
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
+  
   intr_set_level (old_level);
 }
 
@@ -538,7 +604,9 @@ thread_schedule_tail (struct thread *prev)
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
     {
       ASSERT (prev != cur);
+
       palloc_free_page (prev);
+
     }
 }
 
@@ -578,7 +646,139 @@ allocate_tid (void)
 
   return tid;
 }
+
+struct thread *get_child_process_by_tid(tid_t tid, struct thread *current_thread){
+
+    if(list_empty(&current_thread->child_processes)) return NULL;
+
+    enum intr_level old_level;
+
+    old_level = intr_disable ();
+
+
+    struct list child_processes = current_thread->child_processes;
+
+    
+
+
+    struct thread *t = NULL;
+
+    for(struct list_elem *e = list_begin (&child_processes);
+    e != list_back (&child_processes);
+    e = list_next (e)){
+
+        t = list_entry(e, struct thread, child_process_elem);
+        
+        if(t->tid == tid) {
+            intr_set_level (old_level);
+            return t;
+        }
+
+    }
+
+    // check last element
+    t = list_entry(list_back(&child_processes), struct thread, child_process_elem);
+    
+    if(t->tid == tid) {
+        intr_set_level (old_level);
+        return t;
+    }
+
+
+    intr_set_level (old_level);
+    return NULL;
+
+}
+
+struct exit_status *get_exit_status_by_tid(tid_t tid, struct thread *current_thread){
+    if(list_empty(&current_thread->exit_status_list)) return NULL;
+    enum intr_level old_level;
+
+    old_level = intr_disable ();
+
+    struct list exit_status_list = current_thread->exit_status_list;
+
+    for(struct list_elem *e = list_begin (&exit_status_list); e != list_end (&exit_status_list);
+        e = list_next (e)){
+        struct exit_status *es = list_entry(e, struct exit_status, elem);
+        if(es->tid == tid) {
+            intr_set_level (old_level);
+            return es;
+        }
+    }
+    intr_set_level (old_level);
+    return NULL;
+}
+
+struct file *get_file_by_fd(int fd, struct thread *current_thread){
+    if(list_empty(&current_thread->file_descriptors)) return NULL;
+    enum intr_level old_level;
+
+    old_level = intr_disable ();
+
+
+
+    struct list file_descriptors = current_thread->file_descriptors;
+
+    for(struct list_elem *e = list_begin (&file_descriptors); e != list_end (&file_descriptors);
+        e = list_next (e)){
+        struct file *f = list_entry(e, struct file, fd_elem);
+        if(f->fd == fd) {
+            intr_set_level (old_level);
+            return f;
+        }
+    }
+    intr_set_level (old_level);
+    return NULL;
+
+}
+struct thread *get_parent_process_by_tid(tid_t parent_tid){
+    if(list_empty(&all_list)) return NULL;
+    enum intr_level old_level;
+
+    old_level = intr_disable ();
+
+    for(struct list_elem *e = list_begin (&all_list); e != list_end (&all_list);
+        e = list_next (e)){
+        struct thread *t = list_entry(e, struct thread, allelem);
+        if(t->tid == parent_tid) {
+            intr_set_level (old_level);
+            return t;
+        }
+    }
+    intr_set_level (old_level);
+    return NULL;
+}
+
+bool correct_fd(int fd){
+    return get_file_by_fd(fd, thread_current()) != NULL;
+}
+
+void allow_write_to_executing_file(struct thread *t){
+    if(list_empty(&t->file_descriptors)) return;
+    enum intr_level old_level;
+
+    old_level = intr_disable ();
+
+    struct list file_descriptors = t->file_descriptors;
+
+    for(struct list_elem *e = list_begin (&file_descriptors); e != list_end (&file_descriptors);
+        e = list_next (e)){
+        struct file *f = list_entry(e, struct file, fd_elem);
+          // printf("allowing write to file %s\n", f->file_name);
+        
+        if(strcmp(f->file_name, t->name) == 0){
+            file_allow_write(f);
+        }
+        
+    }
+    intr_set_level (old_level);
+}
+
 
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+
+
