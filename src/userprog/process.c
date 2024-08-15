@@ -86,9 +86,12 @@ process_execute (const char *file_name)
   if(!fileExists(fn)) {
     palloc_free_page (fn_copy);
     palloc_free_page (file_name_copy);
-
+   
     return TID_ERROR;
   }
+
+ 
+  palloc_free_page (file_name_copy);
 
   tid_t parent_pid = thread_current()->tid;
 
@@ -96,7 +99,7 @@ process_execute (const char *file_name)
 
   if (spi == NULL) {
     palloc_free_page (fn_copy);
-    palloc_free_page (file_name_copy);
+    
 
     return TID_ERROR;
   }
@@ -113,8 +116,14 @@ process_execute (const char *file_name)
   
   if (tid == TID_ERROR){
     palloc_free_page (fn_copy);
-    palloc_free_page (file_name_copy);
+    palloc_free_page(spi);
+    
   }
+
+  if(tid == 91){
+    printf("fuck yeah\n");
+  }
+  
 
   return tid;
 }
@@ -153,7 +162,8 @@ start_process (void *spi_)
   thread_current()->parent_tid = parent_pid;
 
   
-  // palloc_free_page(spi_);
+  palloc_free_page(file_name);
+  palloc_free_page(spi);
   
 
   /* Start the user process by simulating a return from an
@@ -195,11 +205,11 @@ process_wait (tid_t child_tid)
 
     list_remove(&(es->elem));
 
-    palloc_free_page(es);
+    free(es);
     return status;
   }
 
-  
+  // wait for child process to exit
   lock_acquire(&t->wait_lock);
 
 
@@ -209,14 +219,20 @@ process_wait (tid_t child_tid)
   struct exit_status *es = get_exit_status_by_tid(child_tid, current_thread);
   
   if (es != NULL) {
+
+    
     
     list_remove(&(es->elem));
-    palloc_free_page(es);
+    free(es);
+
+    
+    
     
     
 
   }
-
+  
+  
   
   return current_thread->wait_exit_status;
 }
@@ -233,6 +249,14 @@ process_exit (void)
   char *file_name = strtok_r(cur->name, " ", &save_ptr);
 
   printf ("%s: exit(%d)\n", file_name, cur->exit_status);
+
+  // free all error status
+  struct list_elem *e;
+  for (e = list_begin(&cur->exit_status_list); e != list_end(&cur->exit_status_list); e = list_next(e)) {
+    struct exit_status *es = list_entry(e, struct exit_status, elem);
+    list_remove(e);
+    free(es);
+  }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -251,6 +275,10 @@ process_exit (void)
       pagedir_destroy (pd);
 
     }
+
+    
+
+
 
 }
 
@@ -512,7 +540,10 @@ load (const char *command, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
+
   file_close (file);
+  palloc_free_page(command_copy);
+  
   return success;
 }
 

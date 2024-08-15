@@ -33,10 +33,10 @@ static void handle_file_close(struct intr_frame *);
 static bool validate_address(void *vaddr){
     return is_kernel_vaddr(vaddr)
     || pagedir_get_page(thread_current()->pagedir, vaddr) == NULL
-    || is_kernel_vaddr(vaddr + sizeof(uint32_t*))
-    || pagedir_get_page(thread_current()->pagedir, vaddr + sizeof(uint32_t *)) == NULL
+    || is_kernel_vaddr(vaddr + sizeof(uint32_t*) + 1)
+    || pagedir_get_page(thread_current()->pagedir, vaddr + sizeof(uint32_t *) + 1) == NULL
     || !is_user_vaddr(vaddr)
-    || !is_user_vaddr(vaddr + sizeof(uint32_t *));
+    || !is_user_vaddr(vaddr + sizeof(uint32_t *) + 1);
 
 }
 void
@@ -48,6 +48,7 @@ syscall_init (void)
 static void
 handle_exit (struct intr_frame *f){
     if(validate_address((int *)((f->esp + ARGUMENT_OFFSET)))){
+        
         thread_exit_with_status(-1);
     }
     int status = *( (int *) ((f->esp + ARGUMENT_OFFSET)));
@@ -96,6 +97,7 @@ static void handle_wait (struct intr_frame *f){
 
 static void handle_file_create(struct intr_frame *f){
     if(validate_address((int *)(f->esp + ARGUMENT_OFFSET))){
+        
         thread_exit_with_status(-1);
     }
 
@@ -118,6 +120,7 @@ static void handle_file_create(struct intr_frame *f){
 
 static void handle_file_remove(struct intr_frame *f){
     if(validate_address((int *)((f->esp + ARGUMENT_OFFSET)))){
+        
         thread_exit_with_status(-1);
     }
 

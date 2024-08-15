@@ -306,7 +306,8 @@ thread_exit (void)
   
   cond_signal(&thread_current()->wait_cond, &thread_current()->wait_lock);
   lock_release(&thread_current()->wait_lock);
- 
+  
+  thread_current()->exited = true;
   
 
   
@@ -333,7 +334,8 @@ thread_exit_with_status(int exit_status){
 
 
         // add exit status to exit status list of parent process
-        struct exit_status *es = palloc_get_page(0);
+        struct exit_status *es = malloc(sizeof(struct exit_status));
+        // printf("thread name %s\n", thread_current()->name);
         es->tid = thread_current()->tid;
         es->status = exit_status;
         list_push_back(&parent_thread->exit_status_list, &es->elem);
