@@ -4,6 +4,14 @@
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "vm/supp_page_table.h"
+#include "lib/kernel/hash.h"
+#include "pagedir.h"
+#include "filesys/directory.h"
+#include "filesys/file.h"
+#include "filesys/filesys.h"
+#include "threads/palloc.h"
+
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -143,12 +151,49 @@ page_fault (struct intr_frame *f)
 
   /* Count page faults. */
   page_fault_cnt++;
-
   /* Determine cause. */
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
+
+
+  #ifdef VM
+  struct thread *t = thread_current();
+  struct supplemental_page_table spt = t->spt;
    
+  struct supplemental_page p;
+  struct hash_elem *e;
+
+  p.upage = fault_addr;
+  e = hash_find (&spt.sup_page_table, &p.elem);
+  struct supplemental_page *upage = hash_entry (e, struct supplemental_page, elem);
+
+  uint32_t *kpage = palloc_get_page(PAL_USER);
+
+  if(upage->loc == DISK){
+   /* Load this page. */
+      if (file_read (upage->file, kpage, upage->page_read_bytes) != (int) upage->page_read_bytes)
+        {
+          palloc_free_page (kpage);
+          return;
+        }
+      memset (kpage + upage->page_read_bytes, 0, upage->page_zero_bytes);
+
+      bool success = (pagedir_get_page (t->pagedir, upage->upage) == NULL
+          && pagedir_set_page (t->pagedir, upage->upage, kpage, upage->writable));
+
+      /* Add the page to the process's address space. */
+      if (!success) 
+        {
+          palloc_free_page (kpage);
+          return;
+        }
+  }
+
+
+  
+  #else
+  
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */
@@ -158,5 +203,8 @@ page_fault (struct intr_frame *f)
           write ? "writing" : "reading",
           user ? "user" : "kernel");
   kill (f);
+
+  #endif
+  
 }
 

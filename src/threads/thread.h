@@ -5,6 +5,10 @@
 #include <list.h>
 #include <stdint.h>
 #include "synch.h"
+#ifdef VM
+#include "vm/supp_page_table.h"
+#include "lib/kernel/hash.h"
+#endif
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -96,20 +100,25 @@ struct thread
     struct list_elem elem;              /* List element. */
 
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /* Page directory. */
-    struct list child_processes;        /* list of all child processes that arised from calling `exec` */
-    struct list_elem child_process_elem; /* child processes list element */
-    struct list file_descriptors; /* list of all file descriptors of current process */
-    bool exited;                   /* boolean to check if process has exited */
-    uint32_t file_counter;         /* counter of number of file */
-    struct condition wait_cond;   /* condition variable to wait for child process to exit */
-    struct lock wait_lock;       /* lock to wait for child process to exit */
-    int exit_status;         /* exit status of the process */
-    int wait_exit_status;   /* exit status of the child process since process can only wait on one child process */
-    struct list exit_status_list; /* list of exit status of all child processes */
+   /* Owned by userprog/process.c. */
+   uint32_t *pagedir;                  /* Page directory. */
+   struct list child_processes;        /* list of all child processes that arised from calling `exec` */
+   struct list_elem child_process_elem; /* child processes list element */
+   struct list file_descriptors; /* list of all file descriptors of current process */
+   bool exited;                   /* boolean to check if process has exited */
+   uint32_t file_counter;         /* counter of number of file */
+   struct condition wait_cond;   /* condition variable to wait for child process to exit */
+   struct lock wait_lock;       /* lock to wait for child process to exit */
+   int exit_status;         /* exit status of the process */
+   int wait_exit_status;   /* exit status of the child process since process can only wait on one child process */
+   struct list exit_status_list; /* list of exit status of all child processes */
 
 #endif
+
+#ifdef VM
+struct supplemental_page_table spt; /* Supplemental page table */
+#endif
+
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */

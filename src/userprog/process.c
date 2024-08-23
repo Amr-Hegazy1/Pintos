@@ -19,6 +19,10 @@
 #include "threads/vaddr.h"
 #include "threads/synch.h"
 #include "threads/malloc.h"
+#ifdef VM
+#include "vm/frametable.c"
+#include "vm/supp_page_table.c"
+#endif
 
 
 static thread_func start_process NO_RETURN;
@@ -297,7 +301,7 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -618,6 +622,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
+  
+  struct thread *t = thread_current();
 
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
@@ -628,11 +634,16 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
+      #ifdef VM
+      supplemental_page_table_add_page_to_disk(&t->spt, upage, writable, file, page_read_bytes, page_zero_bytes);
+      #else
+
       /* Get a page of memory. */
       uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
+      if (kpage == NULL){
+        
         return false;
-
+      }
       /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
@@ -647,6 +658,10 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
           palloc_free_page (kpage);
           return false; 
         }
+
+      #endif
+      
+
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -691,6 +706,7 @@ static bool
 install_page (void *upage, void *kpage, bool writable)
 {
   struct thread *t = thread_current ();
+  
 
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */

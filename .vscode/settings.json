@@ -46,6 +46,11 @@
         "cstdbool": "c",
         "random": "c",
         "typeinfo": "c",
-        "palloc.h": "c"
+        "palloc.h": "c",
+        "thread.h": "c",
+        "malloc.h": "c",
+        "gdt.h": "c",
+        "directory.h": "c",
+        "stdio.h": "c"
     }
 }
